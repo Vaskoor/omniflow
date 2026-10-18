@@ -1,0 +1,180 @@
+# (c) Copyright 2026 Bhaskar Kaphle. MIT License.
+#
+# Default configuration for OmniFlow. Override per-deployment by setting
+# the OMNIFLOW_CONFIG env var to point at a different YAML file, or by
+# passing the path explicitly to omnimodal.core.config.load_config().
+
+project:
+  name: omniflow
+  version: "0.1.0"
+  seed: 42
+  offline: true            # when true, the framework never touches the network
+
+# ---------------------------------------------------------------------------
+# Expert pool configuration. Each entry maps an expert id to:
+#   backend       - which underlying engine to use ("mock" or a real backend id)
+#   modality      - the modality tag this expert produces
+#   latency_ms    - the per-call latency floor (used for mock mode and as a
+#                   sanity-check floor in real mode)
+#   params        - backend-specific knobs (dpi, lang, top_k, ...)
+# ---------------------------------------------------------------------------
+experts:
+  ocr:
+    backend: mock           # "easyocr" | "tesseract" | "mock"
+    modality: document
+    latency_ms: 5.0
+    params:
+      lang: en
+      dpi: 300
+  layout:
+    backend: mock           # "layoutparser" | "mock"
+    modality: document
+    latency_ms: 10.0
+    params:
+      model: detectron2://PubNet/layout
+  chart:
+    backend: mock           # "chart_parser" | "mock"
+    modality: chart
+    latency_ms: 20.0
+    params:
+      types: [bar, line, pie]
+  caption:
+    backend: mock           # "blip" | "ofa" | "mock"
+    modality: image
+    latency_ms: 15.0
+    params:
+      max_new_tokens: 64
+  vqa:
+    backend: mock           # "vilt" | "mplug-owl2" | "mock"
+    modality: image
+    latency_ms: 20.0
+    params:
+      max_new_tokens: 32
+  reason:
+    backend: mock           # "llm" | "cot" | "mock"
+    modality: text
+    latency_ms: 30.0
+    params:
+      temperature: 0.0
+      max_new_tokens: 256
+
+# ---------------------------------------------------------------------------
+# Orchestration layer. strategy=heuristic uses the static keyword->expert
+# table when no LLM backend is configured. strategy=llm prompts the LLM
+# backend to emit a JSON array of ControlTokens.
+# ---------------------------------------------------------------------------
+orchestration:
+  strategy: heuristic        # "llm" | "heuristic"
+  parallel: true             # group independent tokens into parallel batches
+  llm:
+    backend: null            # "z-ai-web-dev-sdk" | "openai" | "anthropic" | null
+    api_key_env: null        # env var name to read the API key from
+    model: null
+    temperature: 0.0
+    max_tokens: 1024
+  dependency_rules:
+    layout: [ocr]
+    chart: [ocr, layout]
+    vqa: [ocr, caption]
+    reason: [ocr, layout, caption]
+  fallback:
+    keyword_table:
+      ocr: [ocr]
+      read: [ocr]
+      layout: [layout]
+      chart: [chart]
+      graph: [chart]
+      describe: [caption]
+      caption: [caption]
+      question: [vqa]
+      ask: [vqa]
+      reason: [reason]
+      summarize: [reason]
+      document: [ocr, layout, chart, vqa]
+
+# ---------------------------------------------------------------------------
+# ThinkOmni collaborative-decoding configuration.
+#   alpha              - initial LLM weight (overridden by adaptive_alpha)
+#   alpha_min/alpha_max - bounds for the sigmoid-scaled KL adaptive weight
+#   adaptive           - true: alpha computed from KL(perc||llm) at each step
+#   fusion             - one of weighted_contrastive | weighted_average |
+#                          geometric_mean | max_entropy
+#   conflict_threshold  - JSD threshold above which a top-1 mismatch is a conflict
+# ---------------------------------------------------------------------------
+thinkomni:
+  alpha: 0.5
+  alpha_min: 0.4
+  alpha_max: 0.8
+  adaptive: true
+  fusion: weighted_contrastive
+  conflict_threshold: 0.3
+  vocab:
+    - up
+    - down
+    - flat
+    - unknown
+
+# ---------------------------------------------------------------------------
+# Foresight dual-stream streaming configuration.
+#   frame_skip   - now stream processes every Nth frame
+#   lookahead    - future stream peeks this many frames ahead
+#   dual_stream  - set false to disable the future stream entirely
+# ---------------------------------------------------------------------------
+foresight:
+  frame_skip: 2
+  lookahead: 3
+  dual_stream: true
+  shared_encoder: true
+  interpolation: last          # "last" | "neutral" | "linear"
+
+# ---------------------------------------------------------------------------
+# Cross-modal memory configuration.
+#   capacity    - FIFO bound on the number of stored items
+#   similarity  - "jaccard" (default, deterministic, no embeddings needed)
+#                 or "cosine" (requires an embedding backend)
+# ---------------------------------------------------------------------------
+memory:
+  capacity: 1024
+  similarity: jaccard
+  embedding_backend: null      # e.g. "sentence-transformers/all-MiniLM-L6-v2"
+
+# ---------------------------------------------------------------------------
+# Benchmark / evaluation harness.
+#   workflows  - which workflows to run
+#   mock       - true: use mock experts (offline). false: real backends
+#   repeats    - how many times to repeat each workflow (for mean/median stats)
+#   seed       - global seed for reproducibility
+# ---------------------------------------------------------------------------
+benchmark:
+  workflows:
+    - document_understanding
+    - vqa_single_turn
+    - streaming_60fps
+  mock: true
+  repeats: 100
+  seed: 42
+  output_dir: results
+
+# ---------------------------------------------------------------------------
+# API server (FastAPI) configuration.
+# ---------------------------------------------------------------------------
+api:
+  host: 0.0.0.0
+  port: 8000
+  workers: 1
+  cors:
+    enabled: true
+    allow_origins: ["*"]
+  rate_limit:
+    enabled: false
+    requests_per_minute: 60
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+logging:
+  level: INFO                  # DEBUG | INFO | WARNING | ERROR
+  format: "%(asctime)s %(levelname)s %(name)s %(message)s"
+  to_file: false
+  to_stdout: true
+  file_path: results/omniflow.log

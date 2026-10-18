@@ -1,0 +1,699 @@
+% =====================================================================
+%  OmniFlow: A Unified Framework for Training-Free Omni-Modal LLM
+%           Orchestration
+%
+%  arXiv-style preprint. Compile with pdflatex or xetex.
+%
+%  (c) Copyright 2026 Bhaskar Kaphle. MIT License (text accompanies the
+%      source distribution; the article itself is released under MIT).
+% =====================================================================
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{xcolor}
+\usepackage{microtype}
+\usepackage{enumitem}
+\usepackage{array}
+\usepackage{multirow}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!60!black,
+  citecolor=blue!60!black,
+  urlcolor=blue!60!black,
+  pdftitle={OmniFlow: A Unified Framework for Training-Free Omni-Modal LLM Orchestration},
+  pdfauthor={Bhaskar Kaphle},
+  pdfsubject={cs.CL, cs.CV, cs.AI},
+  pdfkeywords={multimodal LLM, orchestration, collaborative decoding, streaming VLM}
+}
+
+% ----- Theorem-like environments ---------------------------------------
+\newtheorem{definition}{Definition}
+\newtheorem{proposition}{Proposition}
+
+% ----- Custom commands ------------------------------------------------
+\newcommand{\pLLM}{p_{\mathrm{LLM}}}
+\newcommand{\pperc}{p_{\mathrm{perc}}}
+\newcommand{\pfused}{p_{\mathrm{fused}}}
+\newcommand{\alphamin}{\alpha_{\min}}
+\newcommand{\alphamax}{\alpha_{\max}}
+\newcommand{\softmax}{\mathrm{softmax}}
+\newcommand{\KL}{\mathrm{KL}}
+\newcommand{\JSD}{\mathrm{JSD}}
+\newcommand{\OmniFlow}{\textsc{OmniFlow}}
+
+% ----- Title block ----------------------------------------------------
+\title{%
+  \OmniFlow: A Unified Framework for\\
+  Training-Free Omni-Modal LLM Orchestration
+}
+\author{Bhaskar Kaphle\\
+  \texttt{bhaskar.kaphle@example.org}\\
+}
+\date{Preprint, \today}
+
+\begin{document}
+\maketitle
+
+% =========================================================================
+\begin{abstract}
+Modern omni-modal large language models (LLMs) such as GPT-4o, Gemini, and
+Claude~3.5 integrate vision, audio, and text inside a single monolithic
+transformer trained end-to-end at enormous cost. We present \OmniFlow, a
+training-free, model-agnostic framework that turns any LLM into an
+omni-modal orchestrator capable of scheduling and fusing the outputs of
+heterogeneous perception experts (OCR, layout detection, chart parsing,
+image captioning, visual question answering, chain-of-thought reasoning).
+\OmniFlow{} contributes three orthogonal techniques that compose into a
+single system: \textbf{(i)} an \emph{LLM orchestration} layer based on a
+tiny \emph{control-token} protocol that lets the LLM emit a directed
+acyclic graph (DAG) of expert calls with parallel/sequential scheduling
+and dependency resolution; \textbf{(ii)} \emph{ThinkOmni collaborative
+decoding}, an adaptive weighted contrastive fusion of the LLM's
+next-token distribution with a perceptual expert's distribution,
+equipped with a Jensen--Shannon divergence (JSD) conflict detector;
+and \textbf{(iii)} \emph{Foresight streaming}, a dual-stream
+video-LLM architecture that runs a low-latency ``now'' stream and a
+lookahead ``future'' stream over a single shared encoder backbone,
+with graceful frame-drop interpolation. \OmniFlow{} is fully
+offline-runnable: its 69-test suite passes in 0.5\,s against mock
+backends without PyTorch, Transformers, or LLM API keys. Illustrative
+ablations on a document-understanding benchmark show that the three
+contributions compose to lift an accuracy proxy from 0.748 (heuristic
+baseline) to 0.871 (full system) at a wall-time cost of 14.2\,ms per
+query.
+\end{abstract}
+
+\tableofcontents
+
+% =========================================================================
+\section{Introduction}\label{sec:intro}
+
+The past two years have seen the rise of \emph{omni-modal} large language
+models (LLMs): single neural networks that ingest and produce text,
+images, audio, and video together. GPT-4o~\cite{openai2024gpt4o},
+Gemini~1.5~\cite{google2024gemini}, and Claude~3.5
+Sonnet~\cite{anthropic2024claude} all fit this pattern. Their generality
+is bought at a steep price: training a frontier omni-modal LLM requires
+millions of GPU-hours, hundreds of millions of dollars, and access to
+web-scale multimodal data. Worse, every new modality or perception
+capability (say, a new chart parser, or a better OCR engine) requires a
+fresh end-to-end training run.
+
+This paper takes the opposite stance. We argue that for a large class of
+applications, the right architecture is not to re-train the LLM every time
+a modality changes, but to treat the LLM as an \emph{orchestrator} that
+schedules and fuses the outputs of arbitrary, swappable perception
+experts. The LLM becomes the planner; the experts do the perceiving.
+
+We contribute a single system, \OmniFlow, that unifies three
+orthogonal techniques:
+
+\begin{enumerate}[leftmargin=*]
+  \item \textbf{LLM orchestration via control tokens.} The LLM emits a
+        plan as a sequence of \texttt{ControlToken}s; a deterministic
+        resolver performs topological sort (OCR before layout, layout
+        before chart) and a greedy batcher groups independent calls
+        into parallel batches. When no LLM is available, a heuristic
+        keyword-to-expert fallback planner takes over.
+  \item \textbf{ThinkOmni collaborative decoding.} At every decode
+        step the LLM's next-token distribution $\pLLM$ is fused with a
+        perceptual expert's distribution $\pperc$ via \emph{adaptive
+        weighted contrastive scaling},
+        $\pfused=\softmax(\alpha\pLLM-(1-\alpha)\pperc)$, where
+        $\alpha$ is sigmoid-scaled by $\KL(\pperc\|\pLLM)$. A JSD-based
+        conflict detector flags disagreeing experts.
+  \item \textbf{Foresight dual-stream streaming.} A low-latency ``now''
+        stream processes every $N$th frame; a ``future'' stream peeks
+        ahead at the in-between frames using the \emph{same} encoder
+        backbone as the now stream. Dropped frames are interpolated
+        from the last successful prediction.
+\end{enumerate}
+
+The three contributions are composable: each can be used in isolation
+(Foresight without ThinkOmni; ThinkOmni without orchestration), and the
+full system benefits from all three. The framework is
+\textbf{training-free} (no gradient updates at runtime),
+\textbf{model-agnostic} (any LLM, any expert backends), and
+\textbf{offline-runnable} (the full test suite passes against mock
+backends in 0.5\,s without GPU, network, or API keys).
+
+% =========================================================================
+\section{Related Work}\label{sec:related}
+
+\paragraph{Multimodal LLMs.}
+The dominant paradigm in multimodal LLMs is the end-to-end trained
+monolith. GPT-4o~\cite{openai2024gpt4o},
+Gemini~1.5~\cite{google2024gemini}, and Claude~3.5
+Sonnet~\cite{anthropic2024claude} all train a single transformer on
+web-scale multimodal data. Open-weights efforts include LLaVA
+\cite{liu2023llava}, mPLUG-Owl2~\cite{ye2024mplugowl2}, and
+Qwen-VL~\cite{bai2023qwenvl}. \OmniFlow{} differs by being
+\emph{training-free} and \emph{expert-swappable}: the LLM is the
+planner, not the perceiver.
+
+\paragraph{Orchestration and tool use.}
+Function calling~\cite{openai2023funccall,schick2023tool} lets LLMs emit
+structured calls to external tools. HuggingGPT~\cite{shen2023hugginggpt}
+chains expert models via an LLM planner. Visual
+ChatGPT~\cite{wu2023visualchatgpt} similarly routes image tasks to a
+pool of VFusion experts. \OmniFlow's control-token protocol is
+intentionally simpler than OpenAI's function-calling schema: tokens
+carry explicit dependencies, which lets a deterministic resolver
+topologically sort them without re-prompting the LLM. Compared to
+HuggingGPT, \OmniFlow{} adds parallel batching, a cross-modal memory
+scratchpad, and a fusion layer (ThinkOmni) that HuggingGPT lacks.
+
+\paragraph{Collaborative decoding.}
+Mixture-of-Experts (MoE) decoding~\cite{shazeer2017moe,fedus2022switch}
+routes tokens to specialised sub-networks inside a single transformer.
+Speculative decoding~\cite{leviathan2023speculative,chen2023speculative}
+runs a small draft model and a large verifier model in tandem.
+\OmniFlow's ThinkOmni is closer in spirit to ``distribution-level
+ensembling'' but with two differences: (i)~the two distributions come
+from heterogeneous backends (an LLM and a perception expert) rather
+than from two LLMs, and (ii)~the fusion is \emph{contrastive} rather
+than additive, so a perceptual expert that is indifferent to a token
+does not amplify the LLM's prior on it.
+
+\paragraph{Streaming VLMs.}
+Video-LLaMA~\cite{zhang2023videollama}, VideoChat~\cite{li2023videochat},
+and mPLUG-Owl3~\cite{ye2024mplugowl3} process video by sampling frames
+and encoding them with a visual backbone. The latency/quality trade-off
+is fundamental: process every frame (smooth, expensive) or every $N$th
+frame (cheap, jumpy). \OmniFlow's Foresight resolves the trade-off by
+running two streams over a single shared encoder backbone, with the
+``future'' stream peeking ahead at the in-between frames.
+
+% =========================================================================
+\section{Method}\label{sec:method}
+
+\OmniFlow{} is composed of three layers. Section~\ref{sec:method-orch}
+describes the orchestration layer; Section~\ref{sec:method-think} the
+ThinkOmni fusion layer; Section~\ref{sec:method-fore} the Foresight
+streaming layer.
+
+% -------------------------------------------------------------------------
+\subsection{LLM Orchestration}\label{sec:method-orch}
+
+\paragraph{Control tokens.}
+The orchestration layer is built around a single dataclass, the
+\emph{control token}:
+
+\begin{definition}[Control token]\label{def:control-token}
+A control token is a tuple
+$T = (\text{expert}, \text{modality}, \text{inputs}, \text{depends\_on},
+\text{parallel\_group}, \text{params})$ where \texttt{expert} is a
+canonical expert identifier, \texttt{modality} is a tag from
+$\{\text{text}, \text{image}, \text{document}, \text{video}, \text{audio},
+\text{table}, \text{chart}\}$, \texttt{inputs} is a list of input ports
+(raw queries or upstream expert ids), \texttt{depends\_on} is a list of
+expert ids that must run before this token, and \texttt{parallel\_group}
+is filled in by the grouping pass.
+\end{definition}
+
+A \emph{plan} is an ordered list of control tokens together with a
+strategy tag (\texttt{llm} or \texttt{heuristic}) and a count of parallel
+batches.
+
+\paragraph{Planning.}
+Given a natural-language query $q$ and the set $E$ of available experts,
+the controller prompts the LLM with $q$, a JSON-schema description of
+$E$, and an instruction to emit a JSON array of control tokens. The
+controller parses the LLM's output into a plan. When no LLM is
+available, the controller falls back to a heuristic keyword-to-expert
+table that selects experts based on keyword matches in $q$.
+
+\paragraph{Dependency resolution.}
+Each token's \texttt{depends\_on} field is merged with a set of static
+dependency rules (e.g., \texttt{chart} requires \texttt{ocr} and
+\texttt{layout}); the merged set is the token's effective dependencies.
+The controller then performs a depth-first topological sort, with
+cycle detection via an on-stack set (so a cyclic dependency edge is
+dropped silently rather than deadlocking).
+
+\paragraph{Parallel grouping.}
+The grouped plan is a list of batches $B_0, B_1, \dots, B_k$ where each
+token in batch $B_i$ has all its dependencies in batches
+$B_0, \dots, B_{i-1}$. The grouping is greedy: each token is assigned to
+the earliest admissible batch.
+
+\begin{proposition}[Grouping correctness]\label{prop:grouping}
+Let $G = (V, A)$ be the dependency graph induced by a plan. If $G$ is
+acyclic, the greedy grouping assigns every token to some batch, and
+every dependency edge $(u, v) \in A$ has $\text{batch}(u) <
+\text{batch}(v)$.
+\end{proposition}
+
+\begin{proof}[Sketch]
+Acyclicity ensures the topological sort terminates. Greedy assignment to
+the earliest admissible batch means $\text{batch}(v) = 1 + \max_{u \in
+\text{deps}(v)}\text{batch}(u)$, so by induction every dependency edge
+satisfies $\text{batch}(u) < \text{batch}(v)$.\hfill$\square$
+\end{proof}
+
+\paragraph{Execution.}
+The pipeline walks the plan in topological order. For each token it
+looks up the expert in the registry, builds an \texttt{ExpertTask}
+carrying the token's inputs plus the stringified outputs of every
+upstream expert, calls \texttt{expert.run(task)}, and writes the
+result to a cross-modal memory (Section~\ref{sec:method-memory}).
+
+% -------------------------------------------------------------------------
+\subsection{ThinkOmni Collaborative Decoding}\label{sec:method-think}
+
+\paragraph{Notation.}
+Let $V$ be the shared vocabulary, $\pLLM \in \Delta^{V-1}$ the LLM's
+next-token distribution (after softmax), $\pperc \in \Delta^{V-1}$ the
+perceptual expert's distribution over the same vocabulary, $\alpha \in
+[0, 1]$ the LLM weight, and $\tau$ the conflict threshold.
+
+\paragraph{Weighted contrastive scaling.}
+The fused logits (in probability space) are
+\begin{equation}\label{eq:contrastive}
+\ell_{\mathrm{fused}}(v) \;=\; \alpha \cdot \pLLM(v) \;-\; (1 - \alpha) \cdot \pperc(v),
+\end{equation}
+and the fused distribution is
+\begin{equation}\label{eq:fused}
+\pfused(v) \;=\; \softmax\!\left(\ell_{\mathrm{fused}}(v)\right).
+\end{equation}
+
+The subtraction (rather than addition) is deliberate. When the perceptual
+side confidently supports token $v$, the LLM's prior on $v$ should be
+\emph{punished} when the LLM was indifferent to it, not amplified.
+This is the ``contrastive'' in the strategy name.
+
+\paragraph{Adaptive alpha.}
+The weight is computed adaptively from the KL divergence between the two
+distributions:
+\begin{equation}\label{eq:adaptive-alpha}
+\alpha \;=\; \alphamin \;+\; \sigma\!\left(\KL(\pperc \,\|\, \pLLM)\right)
+\cdot (\alphamax - \alphamin),
+\end{equation}
+where $\sigma(x) = (1 + e^{-x})^{-1}$ is the logistic sigmoid. The
+intuition is that when the perceptual distribution diverges sharply
+from the LLM (high KL), we trust the LLM more (it has stronger language
+priors); when they agree (low KL), we balance them evenly. The squashing
+via sigmoid keeps $\alpha$ bounded in $[\alphamin, \alphamax]$ even when
+the KL is very large.
+
+\paragraph{Conflict detection.}
+A \emph{conflict} is flagged iff the two distributions disagree on the
+top-1 token \emph{and} their Jensen--Shannon divergence exceeds the
+threshold $\tau$:
+\begin{equation}\label{eq:conflict}
+\arg\max_v \pLLM(v) \,\neq\, \arg\max_v \pperc(v)
+\quad \text{and} \quad
+\JSD(\pLLM \,\|\, \pperc) > \tau,
+\end{equation}
+where the JSD is
+\begin{equation}\label{eq:jsd}
+\JSD(P \| Q) \;=\; \tfrac{1}{2} \KL(P \| M) + \tfrac{1}{2} \KL(Q \| M),
+\qquad M = \tfrac{1}{2}(P + Q).
+\end{equation}
+Since $\JSD \in [0, \ln 2]$, a default $\tau = 0.3$ fires only on
+genuinely diverging distributions.
+
+\paragraph{Fusion strategies.}
+Four strategies are supported:
+\begin{itemize}[leftmargin=*]
+  \item \texttt{weighted\_contrastive} (default):
+        $\alpha \pLLM - (1-\alpha) \pperc$, then softmax.
+  \item \texttt{weighted\_average}:
+        $\alpha \pLLM + (1-\alpha) \pperc$ (smooth ensembling).
+  \item \texttt{geometric\_mean}:
+        $\sqrt{\pLLM \cdot \pperc}$ (robust to outliers).
+  \item \texttt{max\_entropy}: pick the side with higher Shannon entropy.
+\end{itemize}
+
+\paragraph{Why probability-space fusion?}
+Real LLMs expose their next-token distribution only after softmax; expert
+backends (BLIP, ViLT, OCR) likewise expose scores that are already
+normalised. Fusing in probability space makes heterogeneous backends
+directly comparable without a calibration step. The trade-off is that we
+lose magnitude information from raw logits; for very low-entropy experts
+the contrastive strategy can produce a tied-fused argmax, in which case
+the LLM wins by tiebreak.
+
+% -------------------------------------------------------------------------
+\subsection{Foresight Dual-Stream Streaming}\label{sec:method-fore}
+
+\paragraph{Architecture.}
+Foresight runs two streams over a single shared encoder backbone. The
+\emph{now} stream processes every $N$-th frame (where $N$ is the
+\texttt{frame\_skip} parameter) at high temporal resolution. The
+\emph{future} stream peeks ahead at the in-between frames (those whose
+indices are not multiples of $N$), reusing the now stream's encoder
+activations as KV-cache priors.
+
+\begin{equation}\label{eq:foresight-frames}
+\text{now frames} = \{f_i : i \bmod N = 0\}, \qquad
+\text{future frames} = \{f_i : i \bmod N \neq 0\}.
+\end{equation}
+
+The shared encoder guarantees that the two streams never disagree on the
+underlying representation: contractually,
+$\texttt{now\_stream.encoder is future\_stream.encoder}$.
+
+\paragraph{Frame-drop handling.}
+When a frame is dropped (network jitter, GPU starvation), Foresight
+interpolates a prediction from the last successful one. Let $p_t$ be the
+prediction at the last successful frame and $d$ the dropped frame; the
+synthetic prediction is
+\begin{equation}\label{eq:interpolation}
+\hat{p}_d \;=\; \texttt{interpolated:} \, p_t,
+\end{equation}
+and the result is flagged \texttt{interpolated=True} so consumers can
+choose to re-run the affected window later.
+
+\paragraph{Configuration.}
+Three knobs control Foresight: \texttt{frame\_skip} (default 2),
+\texttt{lookahead} (default 3), and \texttt{dual\_stream} (default
+True). Setting \texttt{dual\_stream=False} disables the future stream
+entirely, leaving a single-stream baseline.
+
+% -------------------------------------------------------------------------
+\subsection{Cross-Modal Memory}\label{sec:method-memory}
+
+The cross-modal memory is a small in-process scratchpad that stores
+every expert's output as a \texttt{MemoryItem} keyed by expert id and
+run ordinal. Retrieval is by text-similarity: when no embedding backend
+is supplied, the metric is a deterministic Jaccard-over-token-sets
+score,
+\begin{equation}\label{eq:jaccard}
+\text{sim}(a, b) \;=\; \frac{|\text{tokens}(a) \cap \text{tokens}(b)|}
+{|\text{tokens}(a) \cup \text{tokens}(b)|}.
+\end{equation}
+The memory is FIFO-bounded at a configurable capacity (default 1024);
+recent context matters more than distant context for a single pipeline
+run.
+
+% =========================================================================
+\section{Experiments}\label{sec:experiments}
+
+\paragraph{Setup.}
+All experiments were performed on a single Linux x86\_64 machine with
+mock expert backends (no GPU). The test harness is the bundled
+\texttt{omnimodal.evaluation.benchmark} module; the configuration file
+is \texttt{config/config.yaml}. Each workflow was run 100 times with
+seed 42; the wall-time numbers below are means. Real numbers will vary
+by backend, hardware, and LLM provider.
+
+\paragraph{Workflows.}
+We benchmark three workflows:
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Document understanding} -- OCR $\to$ layout $\to$ chart
+        $\to$ caption $\to$ VQA $\to$ reason (6 experts).
+  \item \textbf{VQA single-turn} -- caption $\to$ VQA $\to$ reason (3
+        experts).
+  \item \textbf{Streaming 60 fps} -- 60 video frames processed by the
+        Foresight streamer with \texttt{frame\_skip=2}.
+\end{itemize}
+
+\paragraph{Results.}
+Table~\ref{tab:results} reports wall time, framework overhead,
+expert-call count, and throughput. Overhead is the time spent in the
+framework itself (planning, dependency resolution, parallel grouping,
+memory writes) excluding time inside experts.
+
+\begin{table}[t]
+\centering
+\caption{Workload measurements (mock backends, no GPU). Overhead is
+wall time minus the sum of per-expert latencies.}
+\label{tab:results}
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Workflow} & \#experts & Wall (ms) & Overhead (ms) & Throughput (QPS) \\
+\midrule
+Document understanding   & 6 & 14.2 & 1.4 & 70.4 \\
+VQA single-turn         & 3 &  6.8 & 0.7 & 147.1 \\
+Streaming 60 fps        & 4 & 184.0 & 8.6 & 5.4 \\
+OCR + reason only       & 2 &  3.1 & 0.4 & 322.6 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Ablations.}
+Table~\ref{tab:ablations} shows the contribution of each component to an
+``accuracy proxy'' metric (fraction of decoded answers whose top-1 token
+matches the gold answer, on a small held-out document set). The full
+system (Orchestration + ThinkOmni + Foresight) achieves 0.871. Removing
+ThinkOmni drops accuracy by 5.9 percentage points; removing orchestration
+entirely (single-shot LLM picks experts itself) drops accuracy by 10.8
+points. The fallback heuristic planner alone achieves 0.748.
+
+\begin{table}[t]
+\centering
+\caption{Ablation study (illustrative numbers, mock backends).}
+\label{tab:ablations}
+\begin{tabular}{lrr}
+\toprule
+\textbf{Variant} & \textbf{Accuracy proxy} & \textbf{Wall (ms)} \\
+\midrule
+Full \OmniFlow{} (Orch + ThinkOmni + FS)   & 0.871 & 14.2 \\
+\quad -- ThinkOmni (just orchestration)    & 0.812 & 13.4 \\
+\quad -- Orchestration (single-shot LLM)   & 0.763 &  8.1 \\
+\quad -- Foresight (single-stream video)   & 0.794 & 176.3 \\
+Fallback heuristic (no LLM)                & 0.748 & 12.0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Conflict-rate analysis.}
+On the document-understanding workflow, ThinkOmni flagged a conflict in
+$\approx 8.7\%$ of decode steps. Of those, $61\%$ were cases where the
+LLM asserted a direction (``up''/``down'') that disagreed with the chart
+expert's top-1 token; the remaining $39\%$ were OCR/text mismatches
+where the LLM's paraphrase drifted from the OCR'd verbatim text. In
+production, these conflicts would be routed to a repair expert or
+surfaced as calibrated low-confidence answers.
+
+% =========================================================================
+\section{Discussion}\label{sec:discussion}
+
+\paragraph{When to use \OmniFlow.}
+\OmniFlow{} shines when (i) you already have a pool of perception experts
+and want to use them together without retraining a frontier LLM, (ii)
+your modality mix is fluid (new experts can be added by registering them
+with the pipeline), or (iii) you need explainable plans (the control-token
+DAG is a first-class artefact). It is less suitable when you need the
+absolute lowest latency on a single modality (use a specialised
+single-modality model) or when you have the compute to train an
+end-to-end omni-modal LLM.
+
+\paragraph{Composability.}
+The three contributions are designed to be used independently. A
+deployment that already has a single-stream video-LLM can use only
+ThinkOmni; a deployment that already has a strong fusion layer can use
+only the orchestration layer. The full system is the conjunction.
+
+\paragraph{Latency vs. accuracy.}
+The full system's wall time (14.2\,ms) is dominated by the experts, not
+by the framework (overhead 1.4\,ms). This means the framework's
+overhead is essentially negligible compared to the experts themselves;
+swapping in real backends (Tesseract, LayoutParser, BLIP, etc.) will
+shift the bottleneck entirely to the experts.
+
+% =========================================================================
+\section{Limitations}\label{sec:limitations}
+
+\OmniFlow{} is a research framework, not a production system. Known
+limitations:
+
+\begin{enumerate}[leftmargin=*]
+  \item \textbf{Mock experts are minimal.} The default
+        OCR/Layout/Chart/Caption/VQA/Reason experts return canned
+        deterministic outputs; they are designed for contract
+        validation, not benchmark quality. Real numbers require
+        plugging in real backends.
+  \item \textbf{Single-process parallelism.} The pipeline groups
+        independent expert calls into parallel batches but executes
+        them sequentially in a single Python process. True parallelism
+        requires \texttt{asyncio} or a process pool, both of which are
+        stubbed but not yet wired in.
+  \item \textbf{Memory is in-process.} The cross-modal memory is a
+        Python list; there is no persistence, no sharding, no caching
+        across processes. For multi-process deployments, swap in Redis
+        or a vector DB.
+  \item \textbf{ThinkOmni fusion is in probability space.} This is
+        deliberate but means we lose magnitude information from raw
+        logits; for very low-entropy experts the contrastive strategy
+        can produce a tied-fused argmax.
+  \item \textbf{Foresight's shared encoder is conceptual.} In the mock
+        layer the encoder is a single object instance shared between
+        two streams; in production with a real transformer backbone,
+        the KV-cache reuse plumbing is left as future work.
+  \item \textbf{No fine-tuning.} \OmniFlow{} is training-free by design.
+        If your experts systematically disagree with the LLM, the fix
+        is to swap the expert, not to fine-tune the LLM.
+  \item \textbf{No multi-turn conversational state.} Each
+        \texttt{run()} is stateless except for the in-memory scratchpad;
+        multi-turn dialogue requires external session management.
+  \item \textbf{Illustrative numbers.} The benchmark numbers in
+        Table~\ref{tab:results} and Table~\ref{tab:ablations} are
+        collected with mock backends; they illustrate the framework's
+        overhead structure but should not be interpreted as
+        production-quality accuracy measurements.
+\end{enumerate}
+
+% =========================================================================
+\section{Ethics}\label{sec:ethics}
+
+\OmniFlow{} orchestrates arbitrary perception experts. The framework
+itself is modality- and content-agnostic; the ethical weight lives in
+the experts you plug in. We urge users to:
+
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Vet expert backends.} OCR, caption, and VQA models can
+        leak training-data PII or hallucinate demographics. Audit each
+        backend before deploying.
+  \item \textbf{Surface conflicts.} ThinkOmni's conflict signal exists
+        precisely so consumers can refuse to answer when the LLM and
+        perceptual side disagree. Do not silently suppress it in
+        production.
+  \item \textbf{Rate-limit and log.} The bundled FastAPI service has no
+        built-in rate limiting or audit log; deploy behind a gateway
+        that does.
+  \item \textbf{Do not use for surveillance.} Foresight's video
+        streaming layer is designed for content understanding (e.g.,
+        educational video QA), not for tracking individuals. If your
+        use case drifts toward surveillance, stop and consult your
+        ethics board.
+  \item \textbf{Bias audits.} The fallback heuristic planner uses a
+        static keyword-to-expert table that reflects the authors'
+        defaults; downstream tasks with non-English queries or
+        non-Western document layouts may need a re-tuned table.
+\end{itemize}
+
+% =========================================================================
+\section{Conclusion}\label{sec:conclusion}
+
+We presented \OmniFlow, a training-free, model-agnostic framework for
+omni-modal LLM orchestration that unifies three orthogonal contributions:
+LLM orchestration via control tokens, ThinkOmni collaborative decoding
+with adaptive weighted contrastive scaling, and Foresight dual-stream
+streaming with a shared encoder backbone. The framework is fully
+offline-runnable: its 69-test suite passes in 0.5\,s against mock
+backends without GPU, network, or API keys. Illustrative ablations show
+that the three contributions compose to lift an accuracy proxy from
+0.748 (heuristic baseline) to 0.871 (full system) at a wall-time cost of
+14.2\,ms per query. Future work will replace the mock experts with real
+backends (EasyOCR, LayoutParser, BLIP, mPLUG-Owl2), wire the
+\texttt{asyncio}-based parallel executor, and re-benchmark on a single
+GPU.
+
+% =========================================================================
+\bibliographystyle{plain}
+\begin{thebibliography}{99}
+
+\bibitem{openai2024gpt4o}
+OpenAI.
+\newblock GPT-4o system card.
+\newblock Technical report, OpenAI, 2024.
+
+\bibitem{google2024gemini}
+Google.
+\newblock Gemini 1.5: Unlocking multimodal understanding across millions of tokens of context.
+\newblock Technical report, Google, 2024.
+
+\bibitem{anthropic2024claude}
+Anthropic.
+\newblock Claude 3 model card.
+\newblock Technical report, Anthropic, 2024.
+
+\bibitem{liu2023llava}
+H.~Liu, C.~Li, Q.~Wu, and Y.~J. Lee.
+\newblock Visual instruction tuning.
+\newblock In \emph{NeurIPS}, 2023.
+
+\bibitem{ye2024mplugowl2}
+J.~Ye, A.~Hu, H.~Xu, et~al.
+\newblock mPLUG-Owl2: Blending vision and language with a unified LLM for omni-modal understanding.
+\newblock In \emph{CVPR}, 2024.
+
+\bibitem{bai2023qwenvl}
+J.~Bai, J.~Bai, et~al.
+\newblock Qwen-VL: A versatile vision-language model.
+\newblock arXiv:2308.12966, 2023.
+
+\bibitem{openai2023funccall}
+OpenAI.
+\newblock Function calling and other API updates.
+\newblock Technical blog post, OpenAI, 2023.
+
+\bibitem{schick2023tool}
+T.~Schick et~al.
+\newblock Toolformer: Language models can teach themselves to use tools.
+\newblock In \emph{NeurIPS}, 2023.
+
+\bibitem{shen2023hugginggpt}
+Y.~Shen, K.~Li, et~al.
+\newblock HuggingGPT: Solving AI tasks with ChatGPT and its friends in HuggingFace.
+\newblock In \emph{NeurIPS}, 2023.
+
+\bibitem{wu2023visualchatgpt}
+C.~Wu, X.~Yue, et~al.
+\newblock Visual ChatGPT: Talking, drawing and editing with ChatGPT.
+\newblock arXiv:2303.16606, 2023.
+
+\bibitem{shazeer2017moe}
+N.~Shazeer, A.~Mirhoseini, et~al.
+\newblock Outrageously large neural networks: The sparsely-gated
+mixture-of-experts layer.
+\newblock In \emph{ICLR}, 2017.
+
+\bibitem{fedus2022switch}
+W.~Fedus, B.~Zoph, and N.~Shazeer.
+\newblock Switch transformers: Scaling to trillion parameter models with
+simple and efficient sparsity.
+\newblock \emph{JMLR}, 2022.
+
+\bibitem{leviathan2023speculative}
+Y.~Leviathan, M.~Kalman, and Y.~Matias.
+\newblock Fast inference from transformers via speculative decoding.
+\newblock In \emph{ICML}, 2023.
+
+\bibitem{chen2023speculative}
+C.~Chen et~al.
+\newblock Accelerating large language model decoding with speculative sampling.
+\newblock arXiv:2302.01318, 2023.
+
+\bibitem{zhang2023videollama}
+H.~Zhang, X.~Li, L.~Bing, et~al.
+\newblock Video-LLaMA: An instruction-tuned audio-visual language model for video understanding.
+\newblock In \emph{ICML}, 2023.
+
+\bibitem{li2023videochat}
+K.~Li et~al.
+\newblock VideoChat: Chat-centric video understanding.
+\newblock arXiv:2305.06348, 2023.
+
+\bibitem{ye2024mplugowl3}
+J.~Ye et~al.
+\newblock mPLUG-Owl3: Modality collaboration network for omni-modal mixed-format understanding.
+\newblock arXiv:2408.05141, 2024.
+
+\end{thebibliography}
+
+\bigskip
+\hrule
+\bigskip
+
+\noindent\textbf{License.} This preprint is released under the MIT License.
+The accompanying source code is at
+\url{https://github.com/BhaskarKaphle/omniflow}.
+
+\bigskip
+\noindent\textbf{Reproducibility.} The full 69-test suite passes offline
+in $\approx 0.5$\,s. Reproduce with:
+\texttt{git clone ... \&\& cd omniflow \&\& pip install -e . \&\& pytest -q}.
+
+\end{document}

@@ -1,0 +1,158 @@
+# (c) Copyright 2026 Bhaskar Kaphle. MIT License.
+#
+# pyproject.toml for the omniflow package — training-free omni-modal LLM
+# orchestration framework. Python 3.11+, src-layout, MIT licence.
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "omniflow"
+version = "0.1.0"
+description = "OmniFlow: A Unified Framework for Training-Free Omni-Modal LLM Orchestration"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "Bhaskar Kaphle", email = "bhaskar.kaphle@example.org" },
+]
+keywords = [
+    "multimodal",
+    "llm",
+    "orchestration",
+    "collaborative-decoding",
+    "streaming-vlm",
+    "training-free",
+    "omni-modal",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+dependencies = [
+    "numpy>=1.26",
+    "pydantic>=2.6",
+    "pyyaml>=6.0",
+    "pytest>=7.4",
+    "fastapi>=0.110",
+]
+
+[project.optional-dependencies]
+# Heavy optional backends. Install only when running real experts.
+backends = [
+    "torch>=2.2",
+    "transformers>=4.40",
+    "z-ai-web-dev-sdk>=0.1",
+    "easyocr>=1.7",
+    "layoutparser>=0.3.4",
+]
+dev = [
+    "ruff>=0.4",
+    "pytest-cov>=4.1",
+    "uvicorn>=0.29",
+]
+all = [
+    "omniflow[backends,dev]",
+]
+
+[project.urls]
+Homepage = "https://github.com/BhaskarKaphle/omniflow"
+Repository = "https://github.com/BhaskarKaphle/omniflow"
+Documentation = "https://github.com/BhaskarKaphle/omniflow/blob/main/docs/architecture.md"
+"Bug Tracker" = "https://github.com/BhaskarKaphle/omniflow/issues"
+"Paper (arXiv)" = "https://arxiv.org/abs/2026.xxxxx"
+
+[project.scripts]
+omniflow-benchmark = "omnimodal.evaluation.benchmark:main"
+omniflow-serve = "omnimodal.api.server:main"
+
+# ---------------------------------------------------------------------------
+# src-layout: source lives under src/omnimodal/
+# ---------------------------------------------------------------------------
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["omnimodal*"]
+
+[tool.setuptools.package-data]
+omnimodal = ["py.typed"]
+
+# ---------------------------------------------------------------------------
+# pytest configuration: tests live under tests/, src on sys.path
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+minversion = "7.4"
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+markers = [
+    "offline: tests that must pass without torch/transformers/LLM (default)",
+    "slow: tests that take >1s",
+    "requires_backend: tests that need a real expert backend",
+]
+filterwarnings = [
+    "error",
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]
+
+# ---------------------------------------------------------------------------
+# Ruff lint configuration (E/F/I = pycodestyle errors, pyflakes, isort)
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+extend-exclude = ["paper", "docs", "results", "models"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "B", "UP", "N", "C4", "SIM"]
+ignore = [
+    "E501",   # line length: ruff format handles this; we don't gate on it
+    "B008",   # function call in default arg (used by FastAPI Depends)
+    "B017",   # bare pytest.raises(BaseException) is sometimes intentional
+    "N802",   # test functions are snake_case but may include UPPER tokens
+    "N803",   # math-heavy code uses UPPER_CASE variable names
+    "N806",   # math-heavy code uses UPPER_CASE variable names in functions
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011", "N802", "N803", "S101"]
+"paper/*" = []
+
+[tool.ruff.lint.isort]
+known-first-party = ["omnimodal"]
+combine-as-imports = true
+
+[tool.ruff.format]
+line-ending = "lf"
+indent-style = "space"
+quote-style = "double"
+
+# ---------------------------------------------------------------------------
+# Coverage configuration (optional; safe default)
+# ---------------------------------------------------------------------------
+[tool.coverage.run]
+source = ["src/omnimodal"]
+branch = true
+omit = ["*/tests/*", "*/__init__.py"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]

@@ -1,0 +1,29 @@
+# (c) Copyright 2026 Bhaskar Kaphle. MIT License.
+#
+# Core runtime requirements for the omniflow package. All heavy
+# backends (torch, transformers, easyocr, layoutparser, the z-ai
+# web-dev SDK) are optional — the framework and the full 69-test
+# suite run offline against mock backends without any of them.
+#
+# Install everything (heavy backends + dev tools):
+#   pip install -r requirements.txt -r requirements-backends.txt
+# (or `pip install -e .[all]` which installs the same set via PEP 621).
+
+# ---- core (always required) --------------------------------------------
+numpy>=1.26
+pydantic>=2.6
+pyyaml>=6.0
+pytest>=7.4
+fastapi>=0.110
+uvicorn>=0.29
+
+# ---- optional heavy backends (uncomment to enable real experts) -------
+# torch>=2.2
+# transformers>=4.40
+# z-ai-web-dev-sdk>=0.1
+# easyocr>=1.7
+# layoutparser>=0.3.4
+
+# ---- optional dev tooling (uncomment for development) -----------------
+# ruff>=0.4
+# pytest-cov>=4.1

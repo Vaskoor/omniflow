@@ -1,0 +1,125 @@
+# (c) Copyright 2026 Bhaskar Kaphle. MIT License.
+#
+# Python gitignore for OmniFlow. Includes:
+#   - byte-compiled / cached Python artefacts
+#   - virtualenvs
+#   - environment files
+#   - OmniFlow-specific output dirs (results/, models/)
+#   - editor / OS files
+
+# ---- Python byte-compiled / cached -----------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Distribution / packaging
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ---- Virtual environments --------------------------------------------
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# ---- Environment files ------------------------------------------------
+.env
+.env.local
+.env.*.local
+.envrc
+*.env
+
+# ---- Testing / coverage ----------------------------------------------
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.cache/
+.ruff_cache/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+
+# ---- OmniFlow-specific output dirs -----------------------------------
+results/
+models/
+runs/
+logs/
+benchmarks/*.json
+benchmark_*.json
+
+# ---- Editor / IDE -----------------------------------------------------
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+*.sublime-project
+*.sublime-workspace
+
+# ---- OS junk ----------------------------------------------------------
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+
+# ---- LaTeX build artefacts (paper/) ---------------------------------
+paper/*.aux
+paper/*.log
+paper/*.out
+paper/*.toc
+paper/*.lof
+paper/*.lot
+paper/*.fls
+paper/*.fdb_latexmk
+paper/*.synctex.gz
+paper/*.bbl
+paper/*.blg
+paper/*.ilg
+paper/*.idx
+paper/*.ind
+paper/*.nav
+paper/*.snm
+paper/*.vrb
+
+# ---- Jupyter notebooks (if any) -------------------------------------
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/*
+
+# ---- Type-checker caches ---------------------------------------------
+.pyre/
+.pytype/
+
+# ---- Local config overrides -----------------------------------------
+config/config.local.yaml
+config/secrets.yaml
