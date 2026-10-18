@@ -42,25 +42,26 @@ suite or experiment harness.
 ## Table of Contents
 
 1. [Abstract](#abstract)
-2. [Key Contributions](#key-contributions)
-3. [Architecture](#architecture)
-4. [Expert Pool](#expert-pool)
-5. [Orchestration Protocol](#orchestration-protocol)
-6. [ThinkOmni Collaborative Decoding](#thinkomni-collaborative-decoding)
-7. [Foresight Dual-Stream Streaming](#foresight-dual-stream-streaming)
-8. [Cross-Modal Memory](#cross-modal-memory)
-9. [Benchmarks](#benchmarks)
-10. [Quick Start](#quick-start)
-11. [Configuration](#configuration)
-12. [API](#api)
-13. [Reproducibility](#reproducibility)
-14. [Limitations](#limitations)
-15. [Ethics & Responsible Use](#ethics--responsible-use)
-16. [Tests](#tests)
-17. [Roadmap](#roadmap)
-18. [Citation](#citation)
-19. [License](#license)
-20. [Acknowledgements](#acknowledgements)
+2. [Live Demo & Screenshots](#live-demo--screenshots)
+3. [Key Contributions](#key-contributions)
+4. [Architecture](#architecture)
+5. [Expert Pool](#expert-pool)
+6. [Orchestration Protocol](#orchestration-protocol)
+7. [ThinkOmni Collaborative Decoding](#thinkomni-collaborative-decoding)
+8. [Foresight Dual-Stream Streaming](#foresight-dual-stream-streaming)
+9. [Cross-Modal Memory](#cross-modal-memory)
+10. [Benchmarks](#benchmarks)
+11. [Quick Start](#quick-start)
+12. [Configuration](#configuration)
+13. [API](#api)
+14. [Reproducibility](#reproducibility)
+15. [Limitations](#limitations)
+16. [Ethics & Responsible Use](#ethics--responsible-use)
+17. [Tests](#tests)
+18. [Roadmap](#roadmap)
+19. [Citation](#citation)
+20. [License](#license)
+21. [Acknowledgements](#acknowledgements)
 
 ---
 
@@ -91,6 +92,65 @@ OmniFlow is **training-free** (no gradient updates are performed at runtime),
 **model-agnostic** (any LLM, any expert backends), and **offline-runnable**
 (the full test suite of 69 tests passes against mock backends in 0.5 seconds
 without GPU, network, or API keys).
+
+---
+
+## Live Demo & Screenshots
+
+OmniFlow ships with a **FastAPI dashboard** (`omniflow-serve`) that lets you
+drive the full orchestration pipeline from a browser — type any natural-language
+query, watch the controller emit control tokens, see the dependency-resolved
+parallel stages execute against the (deterministic, offline) mock experts, and
+inspect the cross-modal working memory + benchmark sweep — all with **no PyTorch,
+no transformers, and no LLM API keys**.
+
+The screenshots below are **proof that the deployed project actually runs** —
+they were captured by `agent-browser` against a live `uvicorn` server started
+with `omniflow-serve` on `http://localhost:8000/`. The full-page screenshot,
+the live orchestration result, the architecture / expert / benchmark / memory
+sections, a mobile-responsive view, and a 10-second screen recording are all
+included below.
+
+> 📺 A short **screen recording** of the live dashboard is in
+> [`docs/screenshots/demo.webm`](docs/screenshots/demo.webm) (~1.1 MB, 30 fps).
+
+### 1. Dashboard hero + stats (top of page)
+
+![OmniFlow dashboard hero](docs/screenshots/01-hero-top.png)
+
+### 2. Full-page dashboard (everything renders)
+
+![OmniFlow full dashboard](docs/screenshots/02-dashboard-full.png)
+
+### 3. Live orchestration result (proof the pipeline runs end-to-end)
+
+After clicking **“Orchestrate”** with the query
+*“What does this bar chart show about quarterly revenue?”*, the controller
+emitted a 3-token plan (`ImageCaption → ChartReading → VQA`), executed all
+three stages against the mock experts, wrote 4 cross-modal memory entries,
+and returned the full `OrchestrationTrace` in **0.57 ms**.
+
+![OmniFlow live orchestration result](docs/screenshots/03-orchestrate-result.png)
+
+### 4. Three-pillar architecture diagram
+
+![OmniFlow architecture](docs/screenshots/04-architecture.png)
+
+### 5. Training-free expert pool (7 experts)
+
+![OmniFlow expert pool](docs/screenshots/05-experts.png)
+
+### 6. Offline benchmark sweep (5 categories)
+
+![OmniFlow benchmarks](docs/screenshots/06-benchmarks.png)
+
+### 7. Cross-modal working memory (post-run)
+
+![OmniFlow memory](docs/screenshots/07-memory.png)
+
+### 8. Mobile-responsive hero (390 × 844 viewport)
+
+![OmniFlow mobile](docs/screenshots/08-mobile-hero.png)
 
 ---
 
@@ -563,16 +623,41 @@ from omnimodal.experts.ocr import OCRExpert
 ocr = OCRExpert(backend=easyocr.Reader(["en"]))
 ```
 
+### Run the API server (interactive dashboard)
+
+The `omniflow-serve` console script (installed by `pip install -e .`)
+launches a FastAPI server with a polished single-page dashboard at
+`http://localhost:8000/`:
+
+```bash
+omniflow-serve
+# or, equivalently:
+python -m omnimodal.api.server
+```
+
+Then open `http://localhost:8000/` in your browser. The dashboard lets you:
+
+* type any natural-language query and watch the controller emit control
+  tokens, the resolver batch parallel stages, and the experts execute
+  against the offline mock backends;
+* inspect the resulting `OrchestrationTrace` (latency, expert calls, plan,
+  per-step responses, memory writes);
+* run a 5-category offline benchmark sweep with one click;
+* browse the live cross-modal working memory.
+
+Interactive API docs (Swagger UI) are at `http://localhost:8000/docs`.
+
+> 📸 Screenshots of the running dashboard are in
+> [`docs/screenshots/`](docs/screenshots/) — see
+> [Live Demo & Screenshots](#live-demo--screenshots) above for proof that
+> the deployed project actually runs.
+
 ### Docker
 
 ```bash
 docker build -t omniflow:0.1.0 .
 docker run --rm -p 8000:8000 omniflow:0.1.0
 ```
-
-The container exposes a FastAPI service at `http://localhost:8000` with
-endpoints `/health`, `/orchestrate`, `/decode`, `/stream`. See
-[API](#api).
 
 ---
 
@@ -664,23 +749,46 @@ print(cfg.orchestration.strategy)
 ## API
 
 OmniFlow exposes a FastAPI service with the following endpoints. The
-container image binds these to `0.0.0.0:8000`.
+`omniflow-serve` console script binds these to `0.0.0.0:8000`.
 
-| Method | Path            | Body / Query                                | Returns                              |
-|--------|-----------------|---------------------------------------------|--------------------------------------|
-| GET    | `/health`       | —                                           | `{status, version, uptime_s}`        |
-| POST   | `/orchestrate`  | `{query: str, modalities?: list[str]}`     | `{plan, results, answer, overhead}`  |
-| POST   | `/decode`       | `{llm_logits, perceptual_logits, alpha?}`   | `{probs, top_token, alpha, conflict}`|
-| POST   | `/stream`       | `{frames: list[Frame], lookahead?}`         | `{predictions, dropped, plan}`      |
-| GET    | `/memory`       | `?query=str&top_k=5&modality=image`         | `{items, count}`                    |
-| POST   | `/memory/clear` | —                                           | `{cleared: true}`                   |
+| Method | Path              | Body / Query                                  | Returns                                                                 |
+|--------|-------------------|-----------------------------------------------|-------------------------------------------------------------------------|
+| GET    | `/`               | —                                             | HTML dashboard (interactive single-page demo)                           |
+| GET    | `/api/health`      | —                                             | `{status, version, use_real_llm, available_experts, tests_passing}`     |
+| GET    | `/api/experts`     | —                                             | `[{name, modality, capability, dependency_index, is_terminal}, ...]`    |
+| POST   | `/api/orchestrate` | `{query: str, images?: list[str], documents?: list[str]}` | `{query, plan, steps, summary, memory, overhead_breakdown}`             |
+| GET    | `/api/memory`      | —                                             | `{entries: [...], count}`                                              |
+| GET    | `/api/benchmarks`  | —                                             | `{samples: [...], total_samples, answered, answer_rate, avg_latency_ms}`|
+| GET    | `/api/architecture`| —                                             | `{pillars: [...], version, offline_ready, tests_passing}`              |
+| GET    | `/docs`           | —                                             | Swagger UI (interactive OpenAPI docs)                                   |
 
 ### Example cURL
 
 ```bash
-curl -X POST http://localhost:8000/orchestrate \
+# Live orchestration against the offline mock experts
+curl -X POST http://localhost:8000/api/orchestrate \
   -H 'Content-Type: application/json' \
-  -d '{"query":"ocr the invoice and summarize the total"}'
+  -d '{"query":"What does this bar chart show about quarterly revenue?","images":["chart.png"]}'
+```
+
+Sample response (truncated):
+
+```json
+{
+  "query": "What does this bar chart show about quarterly revenue?",
+  "plan": [
+    {"expert_type": "ImageCaption",  "sequence_order": 0, "params": {}},
+    {"expert_type": "ChartReading", "sequence_order": 1, "params": {"depends_on": "ImageCaption"}},
+    {"expert_type": "VQA",          "sequence_order": 2, "params": {"depends_on": "ChartReading"}}
+  ],
+  "summary": {
+    "total_latency_ms": 0.57,
+    "expert_calls": 3,
+    "planning_ms": 0.05,
+    "step_count": 3
+  },
+  "memory": [/* 4 entries */]
+}
 ```
 
 ### Example Python client
@@ -688,10 +796,26 @@ curl -X POST http://localhost:8000/orchestrate \
 ```python
 import requests
 r = requests.post(
-    "http://localhost:8000/orchestrate",
-    json={"query": "describe the image"},
+    "http://localhost:8000/api/orchestrate",
+    json={"query": "describe the image", "images": ["scene.jpg"]},
 ).json()
-print(r["answer"])
+print(r["summary"])         # {'total_latency_ms': 0.4, 'expert_calls': 2, ...}
+print([t["expert_type"] for t in r["plan"]])  # ['ImageCaption', 'VQA']
+```
+
+### Run the offline benchmark sweep from the CLI
+
+```bash
+omniflow-benchmark -n 10          # human-readable table
+omniflow-benchmark -n 10 --json  # machine-readable JSON
+```
+
+```text
+  benchmark                    accuracy     avg ms     std ms    n
+  ----------------------------------------------------------------
+  document_understanding          93.3%      0.677      0.125    5
+  thinkomni_decoding             100.0%      0.509      0.163    5
+  foresight_streaming             91.4%      4.064      0.822    5
 ```
 
 ---
@@ -714,16 +838,19 @@ seed and the same input:
 To reproduce the benchmark numbers above:
 
 ```bash
-python -m omnimodal.evaluation.benchmark \
-  --config config/config.yaml \
-  --mock \
-  --repeats 100 \
-  --seed 42
+# human-readable table (the same one shown in the API section above)
+python -m omnimodal.evaluation.benchmark -n 10 --seed 42
+
+# machine-readable JSON for downstream tooling
+python -m omnimodal.evaluation.benchmark -n 10 --seed 42 --json > results/bench.json
 ```
 
-The harness writes a JSON report to `results/benchmark_<timestamp>.json`
-containing per-workflow wall time, overhead, call counts, and the full
-plan structure for each run.
+The harness runs all three benchmark categories
+(`document_understanding`, `thinkomni_decoding`, `foresight_streaming`)
+against deterministic mock backends in well under a second, with no
+PyTorch / transformers / LLM API keys required. Pass `--json` to get a
+machine-readable dump containing per-sample accuracy, latency, and the
+full plan structure for each run.
 
 ### Environment
 

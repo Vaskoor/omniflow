@@ -461,3 +461,71 @@ __all__ = [
     "gen_mathvista_samples",
     "gen_foresight_frame_drop_samples",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Console-script entry point — `omniflow-benchmark`
+# ---------------------------------------------------------------------------
+def main() -> None:
+    """``omniflow-benchmark`` console-script entry point.
+
+    Runs all three benchmarks (document understanding, ThinkOmni decoding,
+    Foresight streaming) against deterministic mock backends, then prints a
+    compact summary table + JSON dump to stdout.  No external services are
+    required — the whole sweep finishes in well under a second.
+    """
+    import argparse
+    import json as _json
+
+    parser = argparse.ArgumentParser(
+        prog="omniflow-benchmark",
+        description="Run the OmniFlow offline benchmark sweep.",
+    )
+    parser.add_argument(
+        "-n", "--n-samples", type=int, default=10,
+        help="Number of samples per benchmark category (default: 10).",
+    )
+    parser.add_argument(
+        "--json", action="store_true",
+        help="Print machine-readable JSON instead of a human table.",
+    )
+    parser.add_argument(
+        "--seed", type=int, default=42,
+        help="Determinism seed for sample generation (default: 42).",
+    )
+    args = parser.parse_args()
+
+    runner = BenchmarkRunner(seed=args.seed)
+    results = asyncio.run(runner.run_all(n_samples=args.n_samples))
+
+    if args.json:
+        payload = [r.model_dump(mode="json") for r in results]
+        print(_json.dumps({"benchmarks": payload}, indent=2, default=str))
+        return
+
+    # Human-readable summary table.
+    print(
+        "\n  OmniFlow v0.1.0 — offline benchmark sweep\n"
+        "  ─────────────────────────────────────────────────────────────────────\n"
+        f"  samples per category: {args.n_samples}    seed: {args.seed}\n"
+        "  ─────────────────────────────────────────────────────────────────────\n"
+    )
+    print(f"  {'benchmark':<26} {'accuracy':>10} {'avg ms':>10} {'std ms':>10} {'n':>4}")
+    print("  " + "-" * 64)
+    for r in results:
+        print(
+            f"  {r.name:<26} "
+            f"{r.accuracy * 100:>9.1f}% "
+            f"{r.avg_latency_ms:>10.3f} "
+            f"{r.std_latency_ms:>10.3f} "
+            f"{r.n_samples:>4}"
+        )
+    print(
+        "\n  all three benchmarks finished successfully — the framework runs\n"
+        "  end-to-end against deterministic mock backends, no PyTorch /\n"
+        "  transformers / LLM API keys required.\n"
+    )
+
+
+if __name__ == "__main__":  # pragma: no cover
+    main()
